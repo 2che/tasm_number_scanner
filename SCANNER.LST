@@ -1,0 +1,653 @@
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 1
+3\scanner.asm
+
+
+
+      1				     .186
+      2
+      3	      =0000		     STATE_START	 equ  0	  ; новое число ещё не вводилось
+      4	      =0001		     STATE_PLUS		 equ  1	  ; введён плюс
+      5	      =0002		     STATE_POS_DEC	 equ  2	  ; вводится положительное	десятичное+
+      6				     число
+      7	      =0003		     STATE_POS_HEX_START equ  3	  ; обозначено начало положительного  +
+      8				     шестнадцатеричного числа
+      9	      =0004		     STATE_POS_HEX	 equ  4	  ; вводится положительное			    +
+     10				     шестнадцатеричное	число
+     11	      =007F		     STATE_POS_ZERO	 equ  127 ; введён нуль без минуса
+     12	      =-0001		     STATE_MINUS	 equ -1	  ; введён минус
+     13	      =-0002		     STATE_NEG_DEC	 equ -2	  ; вводится отрицательное	десятичное+
+     14				     число
+     15	      =-0003		     STATE_NEG_HEX_START equ -3	  ; обозначено начало отрицательного  +
+     16				     шестнадцатеричного числа
+     17	      =-0004		     STATE_NEG_HEX	 equ -4	  ; вводится отрицательное			    +
+     18				     шестнадцатеричное	число
+     19	      =-007F		     STATE_NEG_ZERO	 equ -127 ; введён нуль с минусом
+     20
+     21	0000			     Scanner_D1	segment	para public 'data'
+     22					 ;;; Сообщения	об ошибках ;;;
+     23	0000  55 6E 6B 6E 6F 77	6E+	 err_unknown_mess	   db "Unknown error!",10,13,'$'
+     24	      20 65 72 72 6F 72	21+
+     25	      0A 0D 24
+     26	0011  41 6E 79 20 6F 66	20+	 err_invalid_char_mess	   db "Any of numbers contains invalid character: $"
+     27	      6E 75 6D 62 65 72	73+
+     28	      20 63 6F 6E 74 61	69+
+     29	      6E 73 20 69 6E 76	61+
+     30	      6C 69 64 20 63 68	61+
+     31	      72 61 63 74 65 72	3A+
+     32	      20 24
+     33	003D  55 6E 65 78 70 65	63+	 err_unexpected_space_mess db "Unexpected space!",10,13,'$'
+     34	      74 65 64 20 73 70	61+
+     35	      63 65 21 0A 0D 24
+     36	0051  41 6E 79 20 6F 66	20+	 err_overflow_mess	   db "Any of numbers is out of	range!",10,13,'$'
+     37	      6E 75 6D 62 65 72	73+
+     38	      20 69 73 20 6F 75	74+
+     39	      20 6F 66 20 72 61	6E+
+     40	      67 65 21 0A 0D 24
+     41	0073  44 6F 75 62 6C 65	20+	 err_double_zero_mess	   db "Double zero at begin of any number!",10,13,'$'
+     42	      7A 65 72 6F 20 61	74+
+     43	      20 62 65 67 69 6E	20+
+     44	      6F 66 20 61 6E 79	20+
+     45	      6E 75 6D 62 65 72	21+
+     46	      0A 0D 24
+     47
+     48	0099  0A 0D 24			 newline db 10,13,'$'
+     49	009C			     Scanner_D1	ends
+     50
+     51
+     52	0000			     Scanner_C1	segment	para public 'code'
+     53				     assume cs:Scanner_C1
+     54				     public scan
+     55
+     56				     ; cx    - длина входной строки
+     57				     ; ds:si - адрес начала входной строки
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 2
+3\scanner.asm
+
+
+
+     58				     ; cs:bx - адрес кода, вызываемого при ошибке
+     59				     ;
+     60				     ; ds:di + 2 - адрес начала массива
+     61				     ; ds:di	 - адрес количества чисел в массиве
+     62	0000			     scan proc
+     63	0000  1E			 push ds
+     64	0001  60			 pusha
+     65	0002  57			 push di ; сохраняем в стек адрес начала массива и	    +
+     66				     увеличиваем его на	размер количества чисел
+     67	0003  47			 inc di
+     68	0004  47			 inc di
+     69
+     70	0005  33 DB			 xor bx,bx ; текущее число будем хранить в bx,	обнуляем    +
+     71				     его
+     72	0007  32 E4			 xor ah,ah ; в	ah будем хранить состояние
+     73	0009  33 ED			 xor bp,bp ; промежуточное	количество чисел	будем	    +
+     74				     хранить в bp
+     75
+     76	000B			     process: ;	начало цикла	обработки
+     77	000B  8A 04			 mov al,[si] ; получаем	следующий символ	в al
+     78
+     79					 ; проверяем состояние и отправляемся на одну из	    +
+     80				     веток	лексера
+     81	000D  80 FC 00			 cmp ah,STATE_START
+     82	0010  74 35			 je .process@new
+     83	0012  80 FC 01			 cmp ah,STATE_PLUS
+     84	0015  74 33			 je .process@plus
+     85	0017  80 FC 02			 cmp ah,STATE_POS_DEC
+     86	001A  74 31			 je .process@dec_num
+     87	001C  80 FC 03			 cmp ah,STATE_POS_HEX_START
+     88	001F  74 2F			 je .process@hex_num_start
+     89	0021  80 FC 04			 cmp ah,STATE_POS_HEX
+     90	0024  74 2D			 je .process@hex_num
+     91	0026  80 FC 7F			 cmp ah,STATE_POS_ZERO
+     92	0029  74 2B			 je .process@zero
+     93	002B  80 FC FF			 cmp ah,STATE_MINUS
+     94	002E  74 29			 je .process@minus
+     95	0030  80 FC FE			 cmp ah,STATE_NEG_DEC
+     96	0033  74 18			 je .process@dec_num
+     97	0035  80 FC FD			 cmp ah,STATE_NEG_HEX_START
+     98	0038  74 16			 je .process@hex_num_start
+     99	003A  80 FC FC			 cmp ah,STATE_NEG_HEX
+    100	003D  74 14			 je .process@hex_num
+    101	003F  80 FC 81			 cmp ah,STATE_NEG_ZERO
+    102	0042  74 12			 je .process@zero
+    103	0044  E9 01BE			 jmp err_unknown ; если вдруг ah в каком	то неопределённом   +
+    104				     состоянии
+    105
+    106	0047  EB 24 90		     .process@new:	     jmp new
+    107	004A  EB 53 90		     .process@plus:	     jmp plus
+    108	004D  E9 0109		     .process@dec_num:	     jmp dec_num
+    109	0050  E9 011D		     .process@hex_num_start: jmp hex_num_start
+    110	0053  E9 0188		     .process@hex_num:	     jmp hex_num
+    111	0056  E9 00B9		     .process@zero:	     jmp zero
+    112	0059  EB 5C 90		     .process@minus:	     jmp minus
+    113
+    114	005C			     next: ; если всё, то всё. если не всё, то обрабатывать	    +
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 3
+3\scanner.asm
+
+
+
+    115				     символы дальше
+    116	005C  46			 inc si
+    117	005D  E2 AC			 loop process
+    118
+    119					 ; закончить разбор
+    120	005F  80 FC 00			 cmp ah,STATE_START
+    121	0062  74 03			 je exit; если последнее число уже	разобрано,		    +
+    122				     переходим	к выходу
+    123
+    124					 ; если ah не STATE_START, то значит, в bx последнее число
+    125	0064  89 1D			 mov [di],bx ; кладём bx в массив
+    126	0066  45			 inc bp	; увеличиваем количество чисел в массиве
+    127
+    128	0067			     exit: ; выход	из процедуры
+    129	0067  5F			 pop di
+    130	0068  89 2D			 mov [di],bp ; сохраняем количество чисел перез самими   +
+    131				     числами в начале массива
+    132	006A  61			 popa
+    133	006B  1F			 pop ds
+    134	006C  C3			 ret
+    135
+    136	006D			     new: ; когда число ещё не разбиралось
+    137	006D  3C 20			 cmp al,' '
+    138	006F  74 15			 je .new@next
+    139	0071  3C 2B			 cmp al,'+'
+    140	0073  74 16			 je new_plus
+    141	0075  3C 2D			 cmp al,'-'
+    142	0077  74 16			 je new_minus
+    143	0079  3C 30			 cmp al,'0'
+    144	007B  72 0B			 jb .new@err_invalid_char
+    145	007D  74 14			 je new_zero
+    146	007F  3C 39			 cmp al,'9'
+    147	0081  77 05			 ja .new@err_invalid_char
+    148	0083  EB 12 90			 jmp new_dec_digit ; если это десятичная цифра
+    149
+    150	0086  EB D4		     .new@next:		     jmp next
+    151	0088  E9 0189		     .new@err_invalid_char:  jmp err_invalid_char
+    152
+    153	008B			     new_plus: ; если в начале числа плюс
+    154	008B  B4 01			 mov ah,STATE_PLUS
+    155	008D  EB CD			 jmp next
+    156
+    157	008F			     new_minus:	; если в начале числа минус
+    158	008F  B4 FF			 mov ah,STATE_MINUS
+    159	0091  EB C9			 jmp next
+    160
+    161	0093			     new_zero: ; если в начале числа ноль
+    162	0093  B4 7F			 mov ah,STATE_POS_ZERO
+    163	0095  EB C5			 jmp next
+    164
+    165	0097			     new_dec_digit: ; если в начале числа десятичная цифра
+    166	0097  B4 02			 mov ah,STATE_POS_DEC
+    167	0099  2C 30			 sub al,30h
+    168	009B  8A D8			 mov bl,al ; поскольку	число только	началось и bx пуст,    +
+    169				     нет смысла конвертировать al в слово,	можно просто	    +
+    170				     записать его в	младшую часть ax
+    171						   ; также	нет смысла домножать пустой bx на 10
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 4
+3\scanner.asm
+
+
+
+    172	009D  EB BD			 jmp next
+    173
+    174	009F			     plus: ; когда	введён плюс
+    175	009F  3C 20			 cmp al,' '
+    176	00A1  74 0E			 je .plus@err_unexpected_space
+    177	00A3  3C 30			 cmp al,'0'
+    178	00A5  72 0D			 jb .plus@err_invalid_char
+    179	00A7  74 06			 je .plus@new_zero
+    180	00A9  3C 39			 cmp al,'9'
+    181	00AB  77 07			 ja .plus@err_invalid_char
+    182	00AD  EB E8			 jmp new_dec_digit ; если это десятичная цифра
+    183
+    184	00AF  EB E2		     .plus@new_zero:		 jmp new_zero
+    185	00B1  E9 017C		     .plus@err_unexpected_space: jmp err_unexpected_space
+    186	00B4  E9 015D		     .plus@err_invalid_char:	 jmp err_invalid_char
+    187
+    188	00B7			     minus: ; когда введён минус
+    189	00B7  3C 20			 cmp al,' '
+    190	00B9  74 0D			 je .minus@err_unexpected_space
+    191	00BB  3C 30			 cmp al,'0'
+    192	00BD  72 0C			 jb .minus@err_invalid_char
+    193	00BF  74 0D			 je minus_zero
+    194	00C1  3C 39			 cmp al,'9'
+    195	00C3  77 06			 ja .minus@err_invalid_char
+    196	00C5  EB 0B 90			 jmp minus_dec_digit ; если	это десятичная цифра
+    197
+    198	00C8  E9 0165		     .minus@err_unexpected_space:    jmp err_unexpected_space
+    199	00CB  E9 0146		     .minus@err_invalid_char:	     jmp err_invalid_char
+    200
+    201	00CE			     minus_zero: ; если после минуса введён нуль
+    202	00CE  B4 81			 mov ah,STATE_NEG_ZERO
+    203	00D0  EB 8A			 jmp next
+    204
+    205	00D2			     minus_dec_digit: ;	если после минуса стоит десятичная цифра
+    206	00D2  B4 FE			 mov ah,STATE_NEG_DEC
+    207	00D4  EB 01 90			 jmp dec_digit
+    208
+    209	00D7			     dec_digit:	; когда введена десятичная цифра
+    210	00D7  2C 30			 sub al,30h
+    211	00D9  50			 push ax
+    212
+    213	00DA  8B C3			 mov ax,bx
+    214	00DC  BA 000A			 mov dx,10
+    215	00DF  F7 EA			 imul dx ; умножаем со знаком bx на 10
+    216	00E1  70 12			 jo .dec_digit@err_overflow_pop
+    217	00E3  8B D8			 mov bx,ax
+    218
+    219	00E5  58			 pop ax
+    220	00E6  50			 push ax
+    221	00E7  80 FC FE			 cmp ah,STATE_NEG_DEC ;	проверяем, не отрицательное ли это	    +
+    222				     число
+    223	00EA  74 03			 je .dec_digit@digit_neg
+    224	00EC  EB 04 90			 jmp .dec_digit@digit_pos
+    225
+    226	00EF  EB 12 90		     .dec_digit@digit_neg:	     jmp digit_neg
+    227	00F2  EB 04 90		     .dec_digit@digit_pos:	     jmp digit_pos
+    228	00F5  E9 0147		     .dec_digit@err_overflow_pop:    jmp err_overflow_pop
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 5
+3\scanner.asm
+
+
+
+    229
+    230	00F8			     digit_pos:	; если число положительное
+    231	00F8  98			 cbw ; получившееся	число всегда	меньше 10, поэтому	ah  +
+    232				     будет	0
+    233	00F9  03 D8			 add bx,ax ; прибавляем новый младший разряд к bx
+    234	00FB  70 03			 jo .digit_pos@err_overflow_pop
+    235	00FD  EB 0F 90			 jmp digit_next
+    236
+    237	0100  E9 013C		     .digit_pos@err_overflow_pop:    jmp err_overflow_pop
+    238
+    239	0103			     digit_neg:	; если число отрицательное
+    240	0103  98			 cbw ; получившееся	число всегда	меньше 10, поэтому	ah  +
+    241				     будет	0
+    242	0104  2B D8			 sub bx,ax ; вычитаем из bx новый младший	разряд
+    243	0106  70 03			 jo .digit_neg@err_overflow_pop
+    244	0108  EB 04 90			 jmp digit_next
+    245
+    246	010B  E9 0131		     .digit_neg@err_overflow_pop:    jmp err_overflow_pop
+    247
+    248	010E			     digit_next: ; закончили обрабатывать цифру
+    249	010E  58			 pop ax
+    250	010F  E9 FF4A			 jmp next
+    251
+    252	0112			     zero: ; когда	введён нуль
+    253	0112  3C 20			 cmp al,' '
+    254	0114  74 11			 je .zero@eon
+    255	0116  3C 23			 cmp al,'#'
+    256	0118  74 22			 je zero_hex
+    257	011A  3C 30			 cmp al,'0'
+    258	011C  72 0C			 jb .zero@err_invalid_char
+    259	011E  74 0D			 je .zero@err_double_zero
+    260	0120  3C 39			 cmp al,'9'
+    261	0122  77 06			 ja .zero@err_invalid_char
+    262	0124  EB 25 90			 jmp zero_dec_digit ; если это десятичная цифра
+    263
+    264	0127  EB 07 90		     .zero@eon:		     jmp eon
+    265	012A  E9 00E7		     .zero@err_invalid_char: jmp err_invalid_char
+    266	012D  E9 0122		     .zero@err_double_zero:  jmp err_double_zero
+    267
+    268	0130			     eon: ; когда достигнут конец числа
+    269	0130  89 1D			 mov [di],bx ; кладём bx в массив
+    270	0132  47			 inc di
+    271	0133  47			 inc di
+    272	0134  45			 inc bp	; увеличиваем количество чисел в массиве
+    273
+    274	0135  33 DB			 xor bx,bx ; возвращаем всё как	было для	принятия	    +
+    275				     следующего числа
+    276	0137  32 E4			 xor ah,ah
+    277	0139  E9 FF20			 jmp next
+    278
+    279	013C			     zero_hex: ; если обозначено начало шестнадцатеричного    +
+    280				     числа
+    281	013C  80 FC 81			 cmp ah,STATE_NEG_ZERO ; проверяем, был ли минус перед числом
+    282	013F  74 05			 je zero_hex_neg
+    283
+    284					 ; если минуса не было
+    285	0141  B4 03			 mov ah,STATE_POS_HEX_START
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 6
+3\scanner.asm
+
+
+
+    286	0143  E9 FF16			 jmp next
+    287
+    288	0146			     zero_hex_neg: ; если перед шестнадцатеричным числом стоял +
+    289				     минус
+    290	0146  B4 FD			 mov ah,STATE_NEG_HEX_START
+    291	0148  E9 FF11			 jmp next
+    292
+    293	014B			     zero_dec_digit: ; если	после нуля стоит обычная десятичная  +
+    294				     цифра
+    295	014B  80 FC 81			 cmp ah,STATE_NEG_ZERO ; проверяем, был ли минус перед числом
+    296	014E  74 04			 je zero_dec_digit_neg
+    297
+    298					 ; если минуса не было
+    299	0150  B4 02			 mov ah,STATE_POS_DEC
+    300	0152  EB 83			 jmp dec_digit
+    301
+    302	0154			     zero_dec_digit_neg: ; если после нуля	с минусом обычная	    +
+    303				     десятичная цифра
+    304	0154  B4 FE			 mov ah,STATE_NEG_DEC
+    305	0156  E9 FF7E			 jmp dec_digit
+    306
+    307	0159			     dec_num: ;	когда десятичное	число в процессе разбора
+    308	0159  3C 20			 cmp al,' '
+    309	015B  74 0B			 je .dec_num@eon
+    310	015D  3C 30			 cmp al,'0'
+    311	015F  72 0C			 jb .dec_num@err_invalid_char
+    312	0161  3C 39			 cmp al,'9'
+    313	0163  77 08			 ja .dec_num@err_invalid_char
+    314	0165  EB 03 90			 jmp .dec_num@dec_digit	; если это цифра
+    315
+    316	0168  EB C6		     .dec_num@eon:		 jmp eon
+    317	016A  E9 FF6A		     .dec_num@dec_digit:	 jmp dec_digit
+    318	016D  E9 00A4		     .dec_num@err_invalid_char:	 jmp err_invalid_char
+    319
+    320	0170			     hex_num_start: ; когда обозначено начало				    +
+    321				     шестнадцатеричного числа
+    322	0170  3C 20			 cmp al,' '
+    323	0172  74 1B			 je .hex_num_start@err_unexpected_space
+    324	0174  3C 30			 cmp al,'0'
+    325	0176  72 1A			 jb .hex_num_start@err_invalid_char
+    326	0178  3C 39			 cmp al,'9'
+    327	017A  76 19			 jbe hex_num_start_digit
+    328	017C  3C 41			 cmp al,'A'
+    329	017E  72 12			 jb .hex_num_start@err_invalid_char
+    330	0180  3C 46			 cmp al,'F'
+    331	0182  76 11			 jbe hex_num_start_digit
+    332	0184  3C 61			 cmp al,'a'
+    333	0186  72 0A			 jb .hex_num_start@err_invalid_char
+    334	0188  3C 66			 cmp al,'f'
+    335	018A  76 09			 jbe hex_num_start_digit
+    336	018C  EB 04 90			 jmp .hex_num_start@err_invalid_char ; если	это не				    +
+    337				     шестнадцатеричная	цифра
+    338
+    339	018F  E9 009E		     .hex_num_start@err_unexpected_space:    jmp err_unexpected_space
+    340	0192  E9 007F		     .hex_num_start@err_invalid_char:	     jmp err_invalid_char
+    341
+    342	0195			     hex_num_start_digit: ; если это шестнадцатеричная цифра
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 7
+3\scanner.asm
+
+
+
+    343	0195  80 FC FD			 cmp ah,STATE_NEG_HEX_START ; проверяем, не стоял ли минус перед+
+    344				     числом
+    345	0198  74 05			 je hex_num_start_digit_neg
+    346
+    347					 ; если минуса не было
+    348	019A  B4 04			 mov ah,STATE_POS_HEX
+    349	019C  EB 06 90			 jmp hex_digit
+    350
+    351	019F			     hex_num_start_digit_neg: ;	если перед числом стоял минус
+    352	019F  B4 FC			 mov ah,STATE_NEG_HEX
+    353	01A1  EB 01 90			 jmp hex_digit
+    354
+    355	01A4			     hex_digit:	; когда введена десятичная цифра
+    356	01A4  3C 39			 cmp al,'9'
+    357	01A6  76 0B			 jbe hex_digit_dec
+    358	01A8  3C 46			 cmp al,'F'
+    359	01AA  76 0C			 jbe hex_digit_upper
+    360	01AC  3C 66			 cmp al,'f'
+    361	01AE  76 0D			 jbe hex_digit_lower
+    362	01B0  EB 53 90			 jmp err_unknown ; если вдруг это оказалась не			    +
+    363				     шестнадцатеричная	цифра
+    364
+    365	01B3			     hex_digit_dec: ; когда введена	десятичная цифра	0-9
+    366	01B3  2C 30			 sub al,30h
+    367	01B5  EB 0B 90			 jmp hex_digit_process
+    368
+    369	01B8			     hex_digit_upper:
+    370	01B8  2C 37			 sub al,41h-10
+    371	01BA  EB 06 90			 jmp hex_digit_process
+    372
+    373	01BD			     hex_digit_lower:
+    374	01BD  2C 57			 sub al,61h-10
+    375	01BF  EB 01 90			 jmp hex_digit_process
+    376
+    377	01C2			     hex_digit_process:	; обработать новый шестнадцатеричный	    +
+    378				     разряд, находящийся в al
+    379	01C2  50			 push ax
+    380
+    381	01C3  8B C3			 mov ax,bx
+    382	01C5  BA 0010			 mov dx,16
+    383	01C8  F7 EA			 imul dx ; умножаем со знаком bx на 16
+    384	01CA  70 73			 jo err_overflow_pop
+    385	01CC  8B D8			 mov bx,ax
+    386
+    387	01CE  58			 pop ax
+    388	01CF  50			 push ax
+    389	01D0  80 FC FC			 cmp ah,STATE_NEG_HEX ;	проверяем, не отрицательное ли это	    +
+    390				     число
+    391	01D3  74 03			 je .hex_digit_process@digit_neg
+    392	01D5  E9 FF20			 jmp digit_pos
+    393
+    394	01D8  E9 FF28		     .hex_digit_process@digit_neg:	     jmp digit_neg
+    395	01DB  EB 62 90		     .hex_digit_process@err_overflow_pop:    jmp err_overflow_pop
+    396
+    397	01DE			     hex_num: ;	когда вводится шестнадцатеричное число
+    398	01DE  3C 20			 cmp al,' '
+    399	01E0  74 1B			 je .hex_num@eon
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 8
+3\scanner.asm
+
+
+
+    400	01E2  3C 30			 cmp al,'0'
+    401	01E4  72 1C			 jb .hex_num@err_invalid_char
+    402	01E6  3C 39			 cmp al,'9'
+    403	01E8  76 16			 jbe .hex_num@hex_digit
+    404	01EA  3C 41			 cmp al,'A'
+    405	01EC  72 14			 jb .hex_num@err_invalid_char
+    406	01EE  3C 46			 cmp al,'F'
+    407	01F0  76 0E			 jbe .hex_num@hex_digit
+    408	01F2  3C 61			 cmp al,'a'
+    409	01F4  72 0C			 jb .hex_num@err_invalid_char
+    410	01F6  3C 66			 cmp al,'f'
+    411	01F8  76 06			 jbe .hex_num@hex_digit
+    412	01FA  EB 06 90			 jmp .hex_num@err_invalid_char ; если это не шестнадцатеричная    +
+    413				     цифра
+    414
+    415	01FD  E9 FF30		     .hex_num@eon:		 jmp eon
+    416	0200  EB A2		     .hex_num@hex_digit:	 jmp hex_digit
+    417	0202  EB 10 90		     .hex_num@err_invalid_char:	 jmp err_invalid_char
+    418
+    419	0205			     err_unknown: ; неизвестная ошибка
+    420	0205  B8 0000s			 mov ax,Scanner_D1
+    421	0208  8E D8			 mov ds,ax
+    422	020A  BA 0000r			 lea dx,err_unknown_mess
+    423	020D  B4 09			 mov ah,9
+    424	020F  CD 15			 int 21
+    425	0211  EB 4E 90			 jmp error
+    426
+    427	0214			     err_invalid_char: ; неверный символ
+    428	0214  BB 0000s			 mov bx,Scanner_D1
+    429	0217  8E DB			 mov ds,bx
+    430	0219  BA 0011r			 lea dx,err_invalid_char_mess
+    431	021C  B4 09			 mov ah,9
+    432	021E  CD 21			 int 21h
+    433	0220  8A D0			 mov dl,al
+    434	0222  B4 02			 mov ah,2
+    435	0224  CD 21			 int 21h
+    436	0226  BA 0099r			 lea dx,newline
+    437	0229  B4 09			 mov ah,9
+    438	022B  CD 21			 int 21h
+    439	022D  EB 32 90			 jmp error
+    440
+    441	0230			     err_unexpected_space: ; неожиданный пробел
+    442	0230  B8 0000s			 mov ax,Scanner_D1
+    443	0233  8E D8			 mov ds,ax
+    444	0235  BA 003Dr			 lea dx,err_unexpected_space_mess
+    445	0238  B4 09			 mov ah,9
+    446	023A  CD 21			 int 21h
+    447	023C  EB 23 90			 jmp error
+    448
+    449	023F			     err_overflow_pop: ; переполнение текущего числа, вытолкнуть +
+    450				     слово
+    451	023F  58			 pop ax
+    452	0240  EB 01 90			 jmp err_overflow
+    453
+    454	0243			     err_overflow: ; переполнение текущего числа
+    455	0243  B8 0000s			 mov ax,Scanner_D1
+    456	0246  8E D8			 mov ds,ax
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 9
+3\scanner.asm
+
+
+
+    457	0248  BA 0051r			 lea dx,err_overflow_mess
+    458	024B  B4 09			 mov ah,9
+    459	024D  CD 21			 int 21h
+    460	024F  EB 10 90			 jmp error
+    461
+    462	0252			     err_double_zero: ;	двойной нуль	в начале	числа
+    463	0252  B8 0000s			 mov ax,Scanner_D1
+    464	0255  8E D8			 mov ds,ax
+    465	0257  BA 0252r			 lea dx,err_double_zero
+    466	025A  B4 09			 mov ah,9
+    467	025C  CD 21			 int 21h
+    468	025E  EB 01 90			 jmp error
+    469
+    470	0261			     error: ; выход из процедуры при	ошибке
+    471	0261  5F			 pop di
+    472	0262  61			 popa
+    473	0263  1F			 pop ds
+    474
+    475	0264  44			 inc sp
+    476	0265  44			 inc sp
+    477	0266  53			 push bx ; подменяем адрес возврата
+    478
+    479	0267  C3			 ret
+    480
+    481	0268			     scan endp
+    482	0268			     Scanner_C1	ends
+    483
+    484
+    485	0000			     Scanner_S1	segment	para stack 'stack'
+    486	0000  64*(????)			 dw 100	dup(?)
+    487	00C8			     Scanner_S1	ends
+    488
+    489				     end process
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 10
+Symbol Table
+
+
+
+
+Symbol Name			  Type	 Value
+
+.DEC_DIGIT@DIGIT_NEG		  Near	 SCANNER_C1:00EF
+.DEC_DIGIT@DIGIT_POS		  Near	 SCANNER_C1:00F2
+.DEC_DIGIT@ERR_OVERFLOW_POP	  Near	 SCANNER_C1:00F5
+.DEC_NUM@DEC_DIGIT		  Near	 SCANNER_C1:016A
+.DEC_NUM@EON			  Near	 SCANNER_C1:0168
+.DEC_NUM@ERR_INVALID_CHAR	  Near	 SCANNER_C1:016D
+.DIGIT_NEG@ERR_OVERFLOW_POP	  Near	 SCANNER_C1:010B
+.DIGIT_POS@ERR_OVERFLOW_POP	  Near	 SCANNER_C1:0100
+.HEX_DIGIT_PROCESS@DIGIT_NEG	  Near	 SCANNER_C1:01D8
+.HEX_DIGIT_PROCESS@ERR_OVERFLOW_  Near	 SCANNER_C1:01DB
+POP
+.HEX_NUM@EON			  Near	 SCANNER_C1:01FD
+.HEX_NUM@ERR_INVALID_CHAR	  Near	 SCANNER_C1:0202
+.HEX_NUM@HEX_DIGIT		  Near	 SCANNER_C1:0200
+.HEX_NUM_START@ERR_INVALID_CHAR	  Near	 SCANNER_C1:0192
+.HEX_NUM_START@ERR_UNEXPECTED_SP  Near	 SCANNER_C1:018F
+ACE
+.MINUS@ERR_INVALID_CHAR		  Near	 SCANNER_C1:00CB
+.MINUS@ERR_UNEXPECTED_SPACE	  Near	 SCANNER_C1:00C8
+.NEW@ERR_INVALID_CHAR		  Near	 SCANNER_C1:0088
+.NEW@NEXT			  Near	 SCANNER_C1:0086
+.PLUS@ERR_INVALID_CHAR		  Near	 SCANNER_C1:00B4
+.PLUS@ERR_UNEXPECTED_SPACE	  Near	 SCANNER_C1:00B1
+.PLUS@NEW_ZERO			  Near	 SCANNER_C1:00AF
+.PROCESS@DEC_NUM		  Near	 SCANNER_C1:004D
+.PROCESS@HEX_NUM		  Near	 SCANNER_C1:0053
+.PROCESS@HEX_NUM_START		  Near	 SCANNER_C1:0050
+.PROCESS@MINUS			  Near	 SCANNER_C1:0059
+.PROCESS@NEW			  Near	 SCANNER_C1:0047
+.PROCESS@PLUS			  Near	 SCANNER_C1:004A
+.PROCESS@ZERO			  Near	 SCANNER_C1:0056
+.ZERO@EON			  Near	 SCANNER_C1:0127
+.ZERO@ERR_DOUBLE_ZERO		  Near	 SCANNER_C1:012D
+.ZERO@ERR_INVALID_CHAR		  Near	 SCANNER_C1:012A
+??DATE				  Text	 "12/22/20"
+??FILENAME			  Text	 "scanner "
+??TIME				  Text	 "21:40:25"
+??VERSION			  Number 040A
+@CPU				  Text	 0103H
+@CURSEG				  Text	 SCANNER_S1
+@FILENAME			  Text	 SCANNER
+@WORDSIZE			  Text	 2
+DEC_DIGIT			  Near	 SCANNER_C1:00D7
+DEC_NUM				  Near	 SCANNER_C1:0159
+DIGIT_NEG			  Near	 SCANNER_C1:0103
+DIGIT_NEXT			  Near	 SCANNER_C1:010E
+DIGIT_POS			  Near	 SCANNER_C1:00F8
+EON				  Near	 SCANNER_C1:0130
+ERROR				  Near	 SCANNER_C1:0261
+ERR_DOUBLE_ZERO			  Near	 SCANNER_C1:0252
+ERR_DOUBLE_ZERO_MESS		  Byte	 SCANNER_D1:0073
+ERR_INVALID_CHAR		  Near	 SCANNER_C1:0214
+ERR_INVALID_CHAR_MESS		  Byte	 SCANNER_D1:0011
+ERR_OVERFLOW			  Near	 SCANNER_C1:0243
+Turbo Assembler	 Version 4.1	    12/22/20 21:40:26	    Page 11
+Symbol Table
+
+
+
+ERR_OVERFLOW_MESS		  Byte	 SCANNER_D1:0051
+ERR_OVERFLOW_POP		  Near	 SCANNER_C1:023F
+ERR_UNEXPECTED_SPACE		  Near	 SCANNER_C1:0230
+ERR_UNEXPECTED_SPACE_MESS	  Byte	 SCANNER_D1:003D
+ERR_UNKNOWN			  Near	 SCANNER_C1:0205
+ERR_UNKNOWN_MESS		  Byte	 SCANNER_D1:0000
+EXIT				  Near	 SCANNER_C1:0067
+HEX_DIGIT			  Near	 SCANNER_C1:01A4
+HEX_DIGIT_DEC			  Near	 SCANNER_C1:01B3
+HEX_DIGIT_LOWER			  Near	 SCANNER_C1:01BD
+HEX_DIGIT_PROCESS		  Near	 SCANNER_C1:01C2
+HEX_DIGIT_UPPER			  Near	 SCANNER_C1:01B8
+HEX_NUM				  Near	 SCANNER_C1:01DE
+HEX_NUM_START			  Near	 SCANNER_C1:0170
+HEX_NUM_START_DIGIT		  Near	 SCANNER_C1:0195
+HEX_NUM_START_DIGIT_NEG		  Near	 SCANNER_C1:019F
+MINUS				  Near	 SCANNER_C1:00B7
+MINUS_DEC_DIGIT			  Near	 SCANNER_C1:00D2
+MINUS_ZERO			  Near	 SCANNER_C1:00CE
+NEW				  Near	 SCANNER_C1:006D
+NEWLINE				  Byte	 SCANNER_D1:0099
+NEW_DEC_DIGIT			  Near	 SCANNER_C1:0097
+NEW_MINUS			  Near	 SCANNER_C1:008F
+NEW_PLUS			  Near	 SCANNER_C1:008B
+NEW_ZERO			  Near	 SCANNER_C1:0093
+NEXT				  Near	 SCANNER_C1:005C
+PLUS				  Near	 SCANNER_C1:009F
+PROCESS				  Near	 SCANNER_C1:000B
+SCAN				  Near	 SCANNER_C1:0000
+STATE_MINUS			  Number -0001
+STATE_NEG_DEC			  Number -0002
+STATE_NEG_HEX			  Number -0004
+STATE_NEG_HEX_START		  Number -0003
+STATE_NEG_ZERO			  Number -007F
+STATE_PLUS			  Number 0001
+STATE_POS_DEC			  Number 0002
+STATE_POS_HEX			  Number 0004
+STATE_POS_HEX_START		  Number 0003
+STATE_POS_ZERO			  Number 007F
+STATE_START			  Number 0000
+ZERO				  Near	 SCANNER_C1:0112
+ZERO_DEC_DIGIT			  Near	 SCANNER_C1:014B
+ZERO_DEC_DIGIT_NEG		  Near	 SCANNER_C1:0154
+ZERO_HEX			  Near	 SCANNER_C1:013C
+ZERO_HEX_NEG			  Near	 SCANNER_C1:0146
+
+Groups & Segments		  Bit Size Align  Combine Class
+
+SCANNER_C1			  16  0268 Para	  Public  CODE
+SCANNER_D1			  16  009C Para	  Public  DATA
+SCANNER_S1			  16  00C8 Para	  Stack	  STACK
+
